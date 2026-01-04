@@ -17,40 +17,40 @@ namespace DICeBatch
     {
         // --- Bindable properties ---
         private string _diceExePath = "";
-        public string DiceExePath { get => _diceExePath; set { _diceExePath = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); } }
+        public string DiceExePath { get => _diceExePath; set { _diceExePath = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); PersistSettings(); } }
 
         private string _refFolderA = "";
-        public string RefFolderA { get => _refFolderA; set { _refFolderA = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); } }
+        public string RefFolderA { get => _refFolderA; set { _refFolderA = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); PersistSettings(); } }
 
         private string _refFolderB = "";
-        public string RefFolderB { get => _refFolderB; set { _refFolderB = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); } }
+        public string RefFolderB { get => _refFolderB; set { _refFolderB = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); PersistSettings(); } }
 
         private string _outputFolder = "";
-        public string OutputFolder { get => _outputFolder; set { _outputFolder = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); } }
+        public string OutputFolder { get => _outputFolder; set { _outputFolder = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); PersistSettings(); } }
 
         private int _subsetSize = 31;
-        public int SubsetSize { get => _subsetSize; set { _subsetSize = value; OnPropertyChanged(); } }
+        public int SubsetSize { get => _subsetSize; set { _subsetSize = value; OnPropertyChanged(); PersistSettings(); } }
 
         private int _stepSize = 5;
-        public int StepSize { get => _stepSize; set { _stepSize = value; OnPropertyChanged(); } }
+        public int StepSize { get => _stepSize; set { _stepSize = value; OnPropertyChanged(); PersistSettings(); } }
 
         private int _threads = 4;
-        public int Threads { get => _threads; set { _threads = value; OnPropertyChanged(); } }
+        public int Threads { get => _threads; set { _threads = value; OnPropertyChanged(); PersistSettings(); } }
 
         private bool _skipSelfCompare = true;
-        public bool SkipSelfCompare { get => _skipSelfCompare; set { _skipSelfCompare = value; OnPropertyChanged(); } }
+        public bool SkipSelfCompare { get => _skipSelfCompare; set { _skipSelfCompare = value; OnPropertyChanged(); PersistSettings(); } }
 
         private bool _isRunning;
         public bool IsRunning { get => _isRunning; private set { _isRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); } }
 
         private double _progress;
-        public double Progress { get => _progress; private set { _progress = value; OnPropertyChanged(); } }
+        public double Progress { get => _progress; private set { _progress = value; OnPropertyChanged(); PersistSettings(); } }
 
         private string _statusText = "Idle";
-        public string StatusText { get => _statusText; private set { _statusText = value; OnPropertyChanged(); } }
+        public string StatusText { get => _statusText; private set { _statusText = value; OnPropertyChanged(); PersistSettings(); } }
 
         private string _logText = "";
-        public string LogText { get => _logText; private set { _logText = value; OnPropertyChanged(); } }
+        public string LogText { get => _logText; private set { _logText = value; OnPropertyChanged(); PersistSettings(); } }
 
         public bool CanRun =>
             !IsRunning &&
@@ -69,6 +69,8 @@ namespace DICeBatch
 
         private CancellationTokenSource? _cts;
 
+        private AppSettings _settings = new AppSettings();
+
         public MainWindowViewModel()
         {
             BrowseDiceExeCommand = new RelayCommand(_ => BrowseDiceExe());
@@ -78,7 +80,36 @@ namespace DICeBatch
             RunCommand = new RelayCommand(async _ => await RunBatchAsync(), _ => CanRun);
             CancelCommand = new RelayCommand(_ => _cts?.Cancel(), _ => IsRunning);
 
+            _settings = SettingsService.Load();
+
+            // Apply loaded settings to your bindable properties:
+            _diceExePath = _settings.DiceExePath;
+            _refFolderA = _settings.RefFolderA;
+            _refFolderB = _settings.RefFolderB;
+            _outputFolder = _settings.OutputFolder;
+
+            _subsetSize = _settings.SubsetSize;
+            _stepSize = _settings.StepSize;
+            _threads = _settings.Threads;
+            _skipSelfCompare = _settings.SkipSelfCompare;
+
+
             AppendLog("Ready.");
+        }
+
+        private void PersistSettings()
+        {
+            _settings.DiceExePath = DiceExePath;
+            _settings.RefFolderA = RefFolderA;
+            _settings.RefFolderB = RefFolderB;
+            _settings.OutputFolder = OutputFolder;
+
+            _settings.SubsetSize = SubsetSize;
+            _settings.StepSize = StepSize;
+            _settings.Threads = Threads;
+            _settings.SkipSelfCompare = SkipSelfCompare;
+
+            SettingsService.Save(_settings);
         }
 
         private void BrowseDiceExe()
