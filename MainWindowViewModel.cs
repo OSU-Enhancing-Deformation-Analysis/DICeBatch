@@ -192,6 +192,20 @@ namespace DICeBatch
                     var jobOutDir = Path.Combine(OutputFolder, jobName);
                     Directory.CreateDirectory(jobOutDir);
 
+                    var templateParamsPath = GetTemplateParamsPath();
+                    var jobParamsPath = Path.Combine(jobOutDir, "dice_params.xml");
+
+                    if (!File.Exists(templateParamsPath))
+                    {
+                        throw new FileNotFoundException(
+                            "dice_params.xml was not found next to the executable.",
+                            templateParamsPath
+                        );
+                    }
+
+                    File.Copy(templateParamsPath, jobParamsPath, overwrite: true);
+
+
                     var xmlPath = WriteDiceInputXml(
                         jobOutDir,
                         a,
@@ -263,6 +277,12 @@ namespace DICeBatch
                             .Where(f => exts.Contains(Path.GetExtension(f)));
         }
 
+        private static string GetTemplateParamsPath()
+        {
+            // AppContext.BaseDirectory works for Debug, Release, and published apps
+            return Path.Combine(AppContext.BaseDirectory, "dice_params.xml");
+        }
+
         private static string MakeJobName(string a, string b)
         {
             static string Sanitize(string s)
@@ -295,42 +315,52 @@ namespace DICeBatch
     string defImage,
     int subsetSize,
     int stepSize,
-    int threads)
+    int threads // NOTE: threads usually belong in params.xml, but leaving it here doesn't hurt unless your build ignores it
+)
         {
             Directory.CreateDirectory(outputDir);
-
             string xmlPath = Path.Combine(outputDir, "dice_input.xml");
 
-            // DICe wants image_folder defined (per your error)
-            // We'll point it at the reference image directory.
             string imageFolder = Path.GetDirectoryName(refImage)
                 ?? throw new InvalidOperationException("Could not determine reference image folder.");
 
-            // Many DICe setups expect image names relative to image_folder:
+            // Template comment says trailing slash/backslash is required:
+            if (!outputDir.EndsWith("\\") && !outputDir.EndsWith("/"))
+                outputDir += "\\";
+
+            if (!imageFolder.EndsWith("\\") && !imageFolder.EndsWith("/"))
+                imageFolder += "\\";
+
             string refName = Path.GetFileName(refImage);
             string defName = Path.GetFileName(defImage);
 
             string xml = $@"<?xml version=""1.0""?>
 <ParameterList>
+  <Parameter name=""output_folder"" type=""string"" value=""{EscapeXml(outputDir)}"" />
   <Parameter name=""image_folder"" type=""string"" value=""{EscapeXml(imageFolder)}"" />
+  <Parameter name=""correlation_parameters_file"" type=""string"" value=""dice_params.xml"" />
+
 
   <Parameter name=""subset_size"" type=""int"" value=""{subsetSize}"" />
   <Parameter name=""step_size"" type=""int"" value=""{stepSize}"" />
-  <Parameter name=""num_threads"" type=""int"" value=""{threads}"" />
 
   <Parameter name=""reference_image"" type=""string"" value=""{EscapeXml(refName)}"" />
-  <Parameter name=""deformed_image"" type=""string"" value=""{EscapeXml(defName)}"" />
 
-  <Parameter name=""output_folder"" type=""string"" value=""{EscapeXml(outputDir)}"" />
+  <ParameterList name=""deformed_images"">
+    <Parameter name=""{EscapeXml(defName)}"" type=""bool"" value=""true"" />
+  </ParameterList>
 </ParameterList>";
 
             File.WriteAllText(xmlPath, xml);
             return xmlPath;
         }
 
-        // Minimal XML escaping for paths
         private static string EscapeXml(string s) =>
-            s.Replace("&", "&amp;").Replace("\"", "&quot;").Replace("<", "&lt;").Replace(">", "&gt;");
+            s.Replace("&", "&amp;")
+             .Replace("\"", "&quot;")
+             .Replace("<", "&lt;")
+             .Replace(">", "&gt;");
+
 
 
         /// <summary>
@@ -338,7 +368,7 @@ namespace DICeBatch
         /// </summary>
         private static string BuildDiceArguments(string xmlPath)
         {
-            return $"-i \"{xmlPath}\"";
+            return $"-v -i \"{xmlPath}\"";
         }
 
         private static async Task<ProcessResult> RunProcessCaptureAsync(
