@@ -74,6 +74,9 @@
                     <ColumnDefinition Width="120"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="120"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="120"/>
+                    <ColumnDefinition Width="120"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
@@ -86,8 +89,9 @@
                 <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="Threads:" Margin="16,0,8,0"/>
                 <TextBox Grid.Column="5" Text="{Binding Threads}" />
 
-                <CheckBox Grid.Column="6" Content="Skip A==B (no self-compare)" IsChecked="{Binding SkipSelfCompare}"
-                          VerticalAlignment="Center" Margin="16,0,0,0"/>
+                <TextBlock Grid.Column="6" VerticalAlignment="Center" Text="Pairing Type:" Margin="16,0,8,0"/>
+                <ComboBox Grid.Column="7" ItemsSource="{Binding PossiblePairingTypes}"  SelectedItem="{Binding PairingType, UpdateSourceTrigger=PropertyChanged}"/>
+                <TextBox Grid.Column="8" Text="{Binding JumpDist}" Margin="8, 0, 0, 0"/>
             </Grid>
         </GroupBox>
 

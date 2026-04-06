@@ -11,6 +11,7 @@
         public int StepSize { get; set; } = 5;
         public int Threads { get; set; } = 4;
 
-        public bool SkipSelfCompare { get; set; } = true;
+        public PairType PairingType { get; set; } = PairType.AllWithInitial;
+        public int JumpDist { get; set; } = 5;
     }
 }

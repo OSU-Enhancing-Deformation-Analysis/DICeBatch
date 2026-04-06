@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Mime;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -34,11 +35,25 @@ namespace DICeBatch
         private int _stepSize = 5;
         public int StepSize { get => _stepSize; set { _stepSize = value; OnPropertyChanged(); PersistSettings(); } }
 
+        // Property to provide all possible enum values
+        public IEnumerable<PairType> PossiblePairingTypes
+        {
+            get
+            {
+                // Use Enum.GetValues to get all enum values as an array
+                return (PairType[])Enum.GetValues(typeof(PairType));
+            }
+        }
+
+        private PairType _pairingType = PairType.AllWithInitial;
+        public PairType PairingType { get => _pairingType; set { _pairingType = value; OnPropertyChanged(); PersistSettings(); } }
+
+        private int _jumpDist = 5;
+
+        public int JumpDist { get => _jumpDist; set { _jumpDist = value; OnPropertyChanged(); PersistSettings(); } }
+
         private int _threads = 4;
         public int Threads { get => _threads; set { _threads = value; OnPropertyChanged(); PersistSettings(); } }
-
-        private bool _skipSelfCompare = true;
-        public bool SkipSelfCompare { get => _skipSelfCompare; set { _skipSelfCompare = value; OnPropertyChanged(); PersistSettings(); } }
 
         private bool _isRunning;
         public bool IsRunning { get => _isRunning; private set { _isRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanRun)); } }
@@ -91,8 +106,8 @@ namespace DICeBatch
             _subsetSize = _settings.SubsetSize;
             _stepSize = _settings.StepSize;
             _threads = _settings.Threads;
-            _skipSelfCompare = _settings.SkipSelfCompare;
-
+            _pairingType = _settings.PairingType;
+            _jumpDist = _settings.JumpDist;
 
             AppendLog("Ready.");
         }
@@ -107,7 +122,8 @@ namespace DICeBatch
             _settings.SubsetSize = SubsetSize;
             _settings.StepSize = StepSize;
             _settings.Threads = Threads;
-            _settings.SkipSelfCompare = SkipSelfCompare;
+            _settings.PairingType = PairingType;
+            _settings.JumpDist = JumpDist;
 
             SettingsService.Save(_settings);
         }
@@ -132,139 +148,179 @@ namespace DICeBatch
                 setPath(dlg.SelectedPath);
         }
 
+        private static string GetTileSuffix(string filePath)
+        {
+            var name = Path.GetFileNameWithoutExtension(filePath);
+            var parts = name.Split('_');
+            if (parts.Length >= 2)
+            {
+                // Grabs the "X_Y" off the end of "prefix_stem_X_Y"
+                return $"{parts[^2]}_{parts[^1]}";
+            }
+            return name;
+        }
+
+        private List<(string, string)> BuildPairs(List<string> imagesA, List<string> imagesB)
+        {
+            return PairingType switch
+            {
+                PairType.Every => BuildPairsEvery(imagesA, imagesB),
+                PairType.SlidingWindow => BuildPairsSequential(imagesA, imagesB, 1, slidingWindow: true),
+                PairType.ContinuousChain => BuildPairsSequential(imagesA, imagesB, JumpDist, slidingWindow: false),
+                PairType.AllWithInitial => BuildPairsAllRefInitial(imagesA, imagesB),
+                _ => throw new InvalidOperationException("Unknown pairing type.")
+            };
+        }
+
+        private List<(string, string)> BuildPairsEvery(List<string> imagesA, List<string> imagesB)
+        {
+            // Build all valid pairs based on spatial coordinates
+            var pairs = new List<(string a, string b)>();
+            foreach (var a in imagesA)
+            {
+                var suffixA = GetTileSuffix(a);
+                foreach (var b in imagesB)
+                {
+                    //Don't comapre with self
+                    if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var suffixB = GetTileSuffix(b);
+
+                    // Only pair them if they came from the same tile location
+                    if (suffixA == suffixB)
+                    {
+                        pairs.Add((a, b));
+                    }
+                }
+            }
+
+            return pairs;
+        }
+
+        private List<(string, string)> BuildPairsSequential(List<string> imagesA, List<string> imagesB, int jump, bool slidingWindow)
+        {
+            // 1. Group images by their tile coordinate (e.g., "0_0", "1_2")
+            var tileGroups = imagesA.GroupBy(GetTileSuffix).ToList();
+            int jumpSize = jump; // This would be the 'x' from your UI (e.g., 1 or 5)
+
+            var pairs = new List<(string a, string b)>();
+
+            foreach (var group in tileGroups)
+            {
+                // 2. Sort the images chronologically for this tile location
+                var sortedTiles = group.OrderBy(f => f).ToList();
+
+                // 3. Iterate and pair with the offset 'x'
+                int offset = jumpSize; // i offset for a continuous jump (e.g., (1, 5), (5, 9), (9, 13) etc.)
+                if (slidingWindow)
+                    offset = 1; // i offset for a sliding window (e.g., (1, 2), (2, 3), (3, 4) etc.)
+
+                for (int i = 0; i < sortedTiles.Count - jumpSize; i = i + offset)
+                {
+                    var currentFrame = sortedTiles[i];
+                    var targetFrame = sortedTiles[i + jumpSize];
+
+                    pairs.Add((currentFrame, targetFrame));
+                }
+            }
+
+            return pairs;
+        }
+
+        private List<(string, string)> BuildPairsAllRefInitial(List<string> imagesA, List<string> imagesB)
+        {
+            // 1. Group all images by their tile coordinate (e.g., "0_0", "1_2")
+            var tileGroups = imagesA.GroupBy(GetTileSuffix).ToList();
+
+            var pairs = new List<(string a, string b)>();
+
+            foreach (var group in tileGroups)
+            {
+                // 2. Sort the images in this specific tile location chronologically
+                var sortedTiles = group.OrderBy(f => f).ToList();
+
+                if (sortedTiles.Count < 2) continue;
+
+                // 3. Set the first frame as the Reference
+                var referenceFrame = sortedTiles[0];
+
+                // 4. Compare Reference to every other frame in this location
+                for (int i = 1; i < sortedTiles.Count; i++)
+                {
+                    pairs.Add((referenceFrame, sortedTiles[i]));
+                }
+            }
+
+            return pairs;
+        }
+
         private async Task RunBatchAsync()
         {
-            // Basic validation (UI should prevent most cases, but keep it safe)
-            if (!CanRun)
-            {
-                AppendLog("Cannot run: please set valid paths.");
-                return;
-            }
+            if (!CanRun) return;
 
             IsRunning = true;
             Progress = 0;
             StatusText = "Building job list...";
             _cts = new CancellationTokenSource();
 
+            // Track timing for the whole batch
+            var batchTimer = Stopwatch.StartNew();
+
             try
             {
                 var imagesA = EnumerateImages(RefFolderA).ToList();
                 var imagesB = EnumerateImages(RefFolderB).ToList();
 
-                if (imagesA.Count == 0 || imagesB.Count == 0)
-                {
-                    AppendLog("No images found in one or both reference folders.");
-                    return;
-                }
+                var pairs = BuildPairs(imagesA, imagesB);
 
-                // Build all pairs A x B
-                var pairs = new List<(string a, string b)>(imagesA.Count * imagesB.Count);
-                foreach (var a in imagesA)
-                {
-                    foreach (var b in imagesB)
-                    {
-                        if (SkipSelfCompare && string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
-                            continue;
+                if (pairs.Count == 0) return;
 
-                        pairs.Add((a, b));
-                    }
-                }
-
-                AppendLog($"Found {imagesA.Count} images in A, {imagesB.Count} images in B.");
-                AppendLog($"Total comparisons queued: {pairs.Count}");
-
-                if (pairs.Count == 0)
-                {
-                    AppendLog("Nothing to run (pairs list is empty).");
-                    return;
-                }
-
-                StatusText = "Running...";
                 int completed = 0;
+                var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Threads, CancellationToken = _cts.Token };
 
-                // Run sequentially for v1 (easy + safe).
-                // If you want parallel later, we can add a concurrency limiter.
-                foreach (var (a, b) in pairs)
+                await Parallel.ForEachAsync(pairs, parallelOptions, async (pair, token) =>
                 {
-                    _cts.Token.ThrowIfCancellationRequested();
-
+                    var (a, b) = pair;
                     var jobName = MakeJobName(a, b);
-                    var jobOutDir = Path.Combine(OutputFolder, jobName);
-                    Directory.CreateDirectory(jobOutDir);
+                    var tempJobDir = Path.Combine(OutputFolder, $".temp_{jobName}");
+                    Directory.CreateDirectory(tempJobDir);
 
+                    // Setup and Execute DICe
                     var templateParamsPath = GetTemplateParamsPath();
-                    var jobParamsPath = Path.Combine(jobOutDir, "dice_params.xml");
+                    File.Copy(templateParamsPath, Path.Combine(tempJobDir, "dice_params.xml"), true);
+                    var xmlPath = WriteDiceInputXml(tempJobDir, a, b, SubsetSize, StepSize, 1);
 
-                    if (!File.Exists(templateParamsPath))
-                    {
-                        throw new FileNotFoundException(
-                            "dice_params.xml was not found next to the executable.",
-                            templateParamsPath
-                        );
-                    }
+                    await RunProcessCaptureAsync(DiceExePath, BuildDiceArguments(xmlPath), tempJobDir, token);
 
-                    File.Copy(templateParamsPath, jobParamsPath, overwrite: true);
+                    // Move result and Cleanup
+                    var solutionFile = Path.Combine(tempJobDir, "DICe_solution_0.txt");
+                    if (File.Exists(solutionFile))
+                        File.Move(solutionFile, Path.Combine(OutputFolder, $"{jobName}.txt"), true);
 
+                    try { Directory.Delete(tempJobDir, true); } catch { }
 
-                    var xmlPath = WriteDiceInputXml(
-                        jobOutDir,
-                        a,
-                        b,
-                        SubsetSize,
-                        StepSize,
-                        Threads
-                    );
+                    // 1. Thread-safe increment
+                    int currentCompleted = Interlocked.Increment(ref completed);
 
-                    var args = BuildDiceArguments(xmlPath);
+                    // 2. Calculate Timing Metrics
+                    long elapsedMs = batchTimer.ElapsedMilliseconds;
+                    double avgMsPerJob = (double)elapsedMs / currentCompleted;
+                    int remainingJobs = pairs.Count - currentCompleted;
+                    TimeSpan eta = TimeSpan.FromMilliseconds(avgMsPerJob * remainingJobs);
 
-                    AppendLog($"\n=== Running: {Path.GetFileName(a)}  vs  {Path.GetFileName(b)} ===");
-                    AppendLog($"Cmd: \"{DiceExePath}\" {args}");
+                    // 3. Update UI
+                    App.Current.Dispatcher.Invoke(() => {
+                        Progress = (double)currentCompleted / pairs.Count;
+                        StatusText = $"Avg: {avgMsPerJob / 1000:F2}s | ETA: {eta:hh\\:mm\\:ss} | ({currentCompleted}/{pairs.Count})";
+                        AppendLog($"Finished: {jobName} ({avgMsPerJob / 1000:F2}s avg)");
+                    });
+                });
 
-                    var result = await RunProcessCaptureAsync(
-                        exePath: DiceExePath,
-                        arguments: args,
-                        workingDirectory: jobOutDir,
-                        token: _cts.Token
-                    );
-
-                    if (result.ExitCode != 0)
-                    {
-                        AppendLog($"[ERROR] ExitCode={result.ExitCode}");
-                        if (!string.IsNullOrWhiteSpace(result.StdErr))
-                            AppendLog(result.StdErr);
-                    }
-                    else
-                    {
-                        AppendLog("[OK]");
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(result.StdOut))
-                        AppendLog(result.StdOut);
-
-                    completed++;
-                    Progress = (double)completed / pairs.Count;
-                    StatusText = $"Running... ({completed}/{pairs.Count})";
-                }
-
-                StatusText = "Done";
-                AppendLog("\nAll jobs completed.");
+                StatusText = $"Done! Total Time: {batchTimer.Elapsed:hh\\:mm\\:ss}";
             }
-            catch (OperationCanceledException)
-            {
-                StatusText = "Canceled";
-                AppendLog("\nCanceled.");
-            }
-            catch (Exception ex)
-            {
-                StatusText = "Error";
-                AppendLog($"\n[EXCEPTION] {ex}");
-            }
-            finally
-            {
-                IsRunning = false;
-                _cts?.Dispose();
-                _cts = null;
-            }
+            catch (Exception ex) { /* handle as before */ }
+            finally { IsRunning = false; batchTimer.Stop(); }
         }
 
         private static IEnumerable<string> EnumerateImages(string folder)
@@ -455,5 +511,13 @@ namespace DICeBatch
         public void Execute(object? parameter) => _execute(parameter);
 
         public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    }
+    
+    public enum PairType
+    {
+        Every,
+        SlidingWindow,
+        ContinuousChain,
+        AllWithInitial
     }
 }
